@@ -1,12 +1,16 @@
 import * as core from '@actions/core';
+import * as github from '@actions/github';
 import { Context } from '@actions/github/lib/context';
-import {
+import type {
   Issue,
   IssueComment,
   IssueCommentCreatedEvent,
   IssuesOpenedEvent,
+  PullRequest,
   PullRequestOpenedEvent,
 } from '@octokit/webhooks-types';
+
+export type Repo = Context['repo'];
 
 /**
  * Returns true if the event originated from an issue event.
@@ -51,29 +55,31 @@ export const isPullRequestCommentEvent = (context: Context): boolean => {
 };
 
 /**
- * Returns true if the event paylod contains the search string.
- * @see https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows
- * @see https://docs.github.com/en/developers/webhooks-and-events/webhook-events-and-payloads
+ * Returns the object that triggered the event.
+ * If it's an issue event, returns the issue.
+ * If it's a pull request event, returns the pull request.
+ * If it's a comment event, returns the comment.
+ * If it's none of the above, returns undefined.
  * @param context
  * @returns
  */
-export const isEventWith = (context: Context, search: string): boolean => {
+export const getEventTrigger = (context: Context): Issue | PullRequest | IssueComment | undefined => {
   if (isIssueEvent(context)) {
     const payload = context.payload as IssuesOpenedEvent;
-    return !!payload.issue.body && payload.issue.body.toLowerCase().includes(search.toLowerCase());
+    return payload.issue;
   }
 
   if (isPullRequestEvent(context)) {
     const payload = context.payload as PullRequestOpenedEvent;
-    return !!payload.pull_request.body && payload.pull_request.body.toLowerCase().includes(search.toLowerCase());
+    return payload.pull_request;
   }
 
   if (isIssueCommentEvent(context) || isPullRequestCommentEvent(context)) {
     const payload = context.payload as IssueCommentCreatedEvent;
-    return payload.comment.body.toLowerCase().includes(search.toLowerCase());
+    return payload.comment;
   }
 
-  return false;
+  return undefined;
 };
 
 /**
@@ -101,38 +107,37 @@ export const getIssueNumber = (context: Context): number => {
   throw new Error(`Could not determine issue number from event "${context.eventName}"`);
 };
 
-export type Repo = { owner: string; name: string };
-/**
- * Returns the owner and name of the repository.
- * @returns
- */
-export const getRepo = (): Repo => {
-  const [owner, name] = (process.env.GITHUB_REPOSITORY || '').split('/');
-  return { owner, name };
-};
-
 /**
  * Writes a summary of the request and response to the job log.
  * @see https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/
  */
 export const writeSummary = async (
-  context: Context,
-  issue: Issue,
-  request: IssueComment,
+  issue: Issue | PullRequest,
+  request: Issue | PullRequest | IssueComment,
   response: IssueComment,
 ): Promise<void> => {
   await core.summary
     .addLink('Issue', issue.html_url)
     .addHeading('Request', 3)
-    .addRaw(request.body, true)
+    .addRaw(request.body ?? '', true)
     .addBreak()
     .addLink('Comment', request.html_url)
     .addHeading('Response', 3)
-    .addRaw(response.body, true)
+    .addRaw(response.body ?? '', true)
     .addBreak()
     .addLink('Comment', response.html_url)
     .addBreak()
     .addHeading('GitHub Context', 3)
-    .addCodeBlock(JSON.stringify(context.payload, null, 2), 'json')
+    .addCodeBlock(JSON.stringify(github.context.payload, null, 2), 'json')
     .write();
+};
+
+/**
+ * Print a debug message with optional an object.
+ * @param message
+ * @param obj
+ */
+export const debug = (message: string, obj?: Record<string, unknown>): void => {
+  core.debug(message);
+  if (obj !== undefined) core.debug(JSON.stringify(obj, null, 2));
 };
